@@ -1,25 +1,22 @@
 name: post
 
-# The Human Manual: a "What if...?" in the morning, a food journey in the
-# evening. GitHub schedules are best-effort, so each slot has two backups on
-# quiet minutes; a run that finds today's video already up just stops.
-# Nepal is UTC+5:45:
-#   whatif  02:23 / 02:53 / 03:37 UTC  (~08:08 Nepal)
-#   food    12:23 / 12:53 / 13:37 UTC  (~18:08 Nepal)
+# The Human Manual: a "What if...?" at EXACTLY 08:00 and a food journey at
+# EXACTLY 18:00 Nepal time. GitHub's schedule is best-effort (hours late on
+# 2026-09-26), so shortly after midnight Nepal time it builds both videos and
+# uploads them SCHEDULED; YouTube publishes them to the minute. Two backup
+# triggers cover a missed night; a video already scheduled for the day is skipped.
+#   18:23 / 19:53 / 21:37 UTC = 00:08 / 01:38 / 03:22 Nepal
 on:
   schedule:
-    - cron: "23 2 * * *"
-    - cron: "53 2 * * *"
-    - cron: "37 3 * * *"
-    - cron: "23 12 * * *"
-    - cron: "53 12 * * *"
-    - cron: "37 13 * * *"
+    - cron: "23 18 * * *"
+    - cron: "53 19 * * *"
+    - cron: "37 21 * * *"
   workflow_dispatch:
     inputs:
       kind:
         description: "Which video"
         type: choice
-        options: [whatif, food]
+        options: [nightly, whatif, food]
         default: whatif
       mode:
         description: "test = build only, keep the video as a download; post = build and upload; check = only confirm the YouTube login"
@@ -45,10 +42,7 @@ jobs:
         id: pick
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            case "${{ github.event.schedule }}" in
-              "23 2 * * *"|"53 2 * * *"|"37 3 * * *") kind=whatif ;;
-              *) kind=food ;;
-            esac
+            kind=nightly
             mode=post
           else
             kind="${{ inputs.kind }}"; mode="${{ inputs.mode }}"

@@ -3,6 +3,8 @@
     python run.py whatif            build and post the next what-if
     python run.py food              build and post the next food journey
     python run.py whatif --test     build only; post nothing, move nothing on
+    python run.py nightly           build BOTH of the coming Nepal day's videos and
+                                    schedule them on YouTube for 08:00 and 18:00
     python run.py status
 
 Exit codes: 0 posted (or already posted today), 2 held (no login),
@@ -15,7 +17,7 @@ import subprocess
 import sys
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -69,7 +71,11 @@ def build(kind, key):
     return body.make(key)
 
 
-def run(kind, test=False):
+NEPAL = timedelta(hours=5, minutes=45)
+PUBLISH = {"whatif": (8, 0), "food": (18, 0)}             # Nepal time, exact
+
+
+def run(kind, test=False, publish_at=None, day=None):
     import upload_hm
     order = WHATIF_ORDER if kind == "whatif" else FOOD_ORDER
     s = load_state()
@@ -85,13 +91,16 @@ def run(kind, test=False):
         print("[hold  ] no login yet - nothing built, the topic waits")
         return 2
     today = datetime.now().strftime("%Y-%m-%d")
-    if any(h.get("kind") == kind and h.get("youtube_id") and h.get("date", "").startswith(today)
+    if any(h.get("kind") == kind and h.get("youtube_id") and
+           (h.get("for_day") == day if day else h.get("date", "").startswith(today))
            for h in s["history"]):
-        print(f"[skip  ] today's {kind} is already posted")
+        print(f"[skip  ] {kind} for {day or today} is already up or scheduled")
         return 0
     fails = s.setdefault("fails", {})
     fkey = f"{kind}:{key}"
     entry = {"date": datetime.now().strftime("%Y-%m-%d %H:%M"), "kind": kind, "title": key}
+    if day:
+        entry["for_day"] = day
 
     def failed(why):
         fails[fkey] = fails.get(fkey, 0) + 1
@@ -114,7 +123,9 @@ def run(kind, test=False):
     if problem:
         return failed(f"check: {problem}")
     try:
-        entry["youtube_id"] = upload_hm.upload(meta["file"], meta, "public")
+        entry["youtube_id"] = upload_hm.upload(meta["file"], meta, "public", publish_at=publish_at)
+        if publish_at:
+            entry["publish_at"] = publish_at.strftime("%Y-%m-%d %H:%M UTC")
     except Exception as e:
         return failed(f"upload: {type(e).__name__}: {str(e)[:160]}")
     fails.pop(fkey, None)
@@ -123,6 +134,19 @@ def run(kind, test=False):
     save_state(s)
     cleanup()
     return 0
+
+
+def nightly():
+    """Both videos for the Nepal day now starting, scheduled to the minute."""
+    now = datetime.now(timezone.utc)
+    day = (now + NEPAL).date()
+    worst = 0
+    for kind in ("whatif", "food"):
+        h, m = PUBLISH[kind]
+        at = datetime(day.year, day.month, day.day, h, m, tzinfo=timezone.utc) - NEPAL
+        print(f"=== {kind} for {day} at {h:02d}:{m:02d} Nepal")
+        worst = max(worst, run(kind, publish_at=at, day=day.isoformat()))
+    return worst
 
 
 def status():
@@ -140,6 +164,8 @@ if __name__ == "__main__":
     if what == "status":
         status()
         sys.exit(0)
+    if what == "nightly":
+        sys.exit(nightly())
     if what not in ("whatif", "food"):
-        sys.exit("usage: python run.py whatif|food|status [--test]")
+        sys.exit("usage: python run.py whatif|food|nightly|status [--test]")
     sys.exit(run(what, test="--test" in sys.argv))
