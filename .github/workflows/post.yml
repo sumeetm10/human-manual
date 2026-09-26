@@ -1,0 +1,128 @@
+name: post
+
+# The Human Manual: a "What if...?" in the morning, a food journey in the
+# evening. GitHub schedules are best-effort, so each slot has two backups on
+# quiet minutes; a run that finds today's video already up just stops.
+# Nepal is UTC+5:45:
+#   whatif  02:23 / 02:53 / 03:37 UTC  (~08:08 Nepal)
+#   food    12:23 / 12:53 / 13:37 UTC  (~18:08 Nepal)
+on:
+  schedule:
+    - cron: "23 2 * * *"
+    - cron: "53 2 * * *"
+    - cron: "37 3 * * *"
+    - cron: "23 12 * * *"
+    - cron: "53 12 * * *"
+    - cron: "37 13 * * *"
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: "Which video"
+        type: choice
+        options: [whatif, food]
+        default: whatif
+      mode:
+        description: "test = build only, keep the video as a download; post = build and upload; check = only confirm the YouTube login"
+        type: choice
+        options: [test, post, check]
+        default: test
+
+permissions:
+  contents: write          # to save data/state.json
+
+concurrency:
+  group: post
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Which video, and post or test
+        id: pick
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            case "${{ github.event.schedule }}" in
+              "23 2 * * *"|"53 2 * * *"|"37 3 * * *") kind=whatif ;;
+              *) kind=food ;;
+            esac
+            mode=post
+          else
+            kind="${{ inputs.kind }}"; mode="${{ inputs.mode }}"
+          fi
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "### $kind ($mode)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skip posting until the channel is connected
+        id: gate
+        env:
+          YT_TOKEN_JSON: ${{ secrets.YT_TOKEN_JSON }}
+        run: |
+          if [ "${{ steps.pick.outputs.mode }}" != "test" ] && [ -z "$YT_TOKEN_JSON" ]; then
+            echo "::notice::YT_TOKEN_JSON is not set yet - nothing built, the topic waits"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: remotion/package-lock.json
+
+      - name: Install
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          sudo apt-get update -qq
+          # the food and what-if emoji are drawn with this font; without it they vanish
+          sudo apt-get install -y -qq ffmpeg fonts-noto-color-emoji > /dev/null
+          fc-cache -f > /dev/null
+          pip install -q -r requirements.txt
+          cd remotion && npm ci --no-audit --no-fund && npx remotion browser ensure
+
+      - name: Build${{ steps.pick.outputs.mode == 'post' && ' and post' || '' }}
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YT_TOKEN_JSON: ${{ secrets.YT_TOKEN_JSON }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          if [ "${{ steps.pick.outputs.mode }}" = "check" ]; then
+            python upload_hm.py --whoami
+          elif [ "${{ steps.pick.outputs.mode }}" = "test" ]; then
+            python run.py "${{ steps.pick.outputs.kind }}" --test
+          else
+            python run.py "${{ steps.pick.outputs.kind }}"
+          fi
+
+      - name: Save which topic is next
+        if: always() && steps.gate.outputs.run == 'true' && steps.pick.outputs.mode == 'post'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/state.json
+          if ! git diff --cached --quiet; then
+            git commit -q -m "state: ${{ steps.pick.outputs.kind }} $(date -u +%F)"
+            git pull -q --rebase && git push -q
+          fi
+
+      - name: Keep the video for a week
+        if: always() && steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pick.outputs.kind }}-${{ github.run_number }}
+          path: out/*.mp4
+          retention-days: 7
+          if-no-files-found: ignore

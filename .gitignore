@@ -1,0 +1,22 @@
+# secrets - never commit
+token*.json
+client_secret*.json
+.env
+
+# build output and caches
+__pycache__/
+*.pyc
+jobs/
+out/
+stills*/
+check/
+data/*
+!data/state.json
+remotion/node_modules/
+remotion/out/
+*.mp4
+*.wav
+*.mp3
+*.log
+test_*.json
+PROTOTYPE*
