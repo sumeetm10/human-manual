@@ -476,7 +476,7 @@ const WhatIf: React.FC<Partial<WhatIfProps>> = ({
   const shake = cur.scene === 'run' && cur.boom ? Math.sin(f * 2.3) * 6 : 0;
 
   return (
-    <AbsoluteFill style={{ backgroundColor: '#050814', transform: `translate(${shake}px, ${shake * 0.6}px)` }}>
+    <AbsoluteFill style={{ backgroundColor: '#050814', transform: `translate(${shake}px, ${shake * 0.6}px) scale(${shake ? 1.02 : 1})` }}>
       {prev && fade < 1 && (
         <AbsoluteFill style={{ opacity: 1 - fade }}>
           <Scene b={prev} sec={sec} t0={startOf(prev.line)} f={f} t={1} emoji={emoji} title={title} />
